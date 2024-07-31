@@ -6,8 +6,15 @@ class ExtraNetworkLora(extra_networks.ExtraNetwork):
     def __init__(self):
         super().__init__('lora')
 
+        self.errors = {}
+        """mapping of network names to the number of errors the network had during operation"""
+
+    remove_symbols = str.maketrans('', '', ":,")
+
     def activate(self, p, params_list):
         additional = shared.opts.sd_lora
+
+        self.errors.clear()
 
         if additional != "None" and additional in networks.available_networks and not any(x for x in params_list if x.items[0] == additional):
             p.all_prompts = [x + f"<lora:{additional}:{shared.opts.extra_networks_default_multiplier}>" for x in p.all_prompts]
@@ -38,22 +45,18 @@ class ExtraNetworkLora(extra_networks.ExtraNetwork):
         networks.load_networks(names, te_multipliers, unet_multipliers, dyn_dims)
 
         if shared.opts.lora_add_hashes_to_infotext:
-            network_hashes = []
+            if not getattr(p, "is_hr_pass", False) or not hasattr(p, "lora_hashes"):
+                p.lora_hashes = {}
+
             for item in networks.loaded_networks:
-                shorthash = item.network_on_disk.shorthash
-                if not shorthash:
-                    continue
+                if item.network_on_disk.shorthash and item.mentioned_name:
+                    p.lora_hashes[item.mentioned_name.translate(self.remove_symbols)] = item.network_on_disk.shorthash
 
-                alias = item.mentioned_name
-                if not alias:
-                    continue
-
-                alias = alias.replace(":", "").replace(",", "")
-
-                network_hashes.append(f"{alias}: {shorthash}")
-
-            if network_hashes:
-                p.extra_generation_params["Lora hashes"] = ", ".join(network_hashes)
+            if p.lora_hashes:
+                p.extra_generation_params["Lora hashes"] = ', '.join(f'{k}: {v}' for k, v in p.lora_hashes.items())
 
     def deactivate(self, p):
-        pass
+        if self.errors:
+            p.comment("Networks with errors: " + ", ".join(f"{k} ({v})" for k, v in self.errors.items()))
+
+            self.errors.clear()
